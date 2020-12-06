@@ -31,7 +31,7 @@ typedef struct {
 typedef void (*map_func)(mr_state mr_info, FILE* file, char* val);
 typedef void (*reduce_func)(mr_state mr_info, char* key, void* something, int id);
 void MRReduce(mr_state mr_info, char* key, void* something, int id);
-
+void MREmit(mr_state mr_info, char* new_word, int val);
 typedef struct {
 	map_func map;
 //everything that MREmit & reduce needs
@@ -44,6 +44,7 @@ void* map_caller(void* arg){
 	map_caller_struct* typed_arg;
 	typed_arg = (map_caller_struct*)arg;
 	typed_arg->map(typed_arg->mr_info, typed_arg->file,typed_arg->val);
+	//MREmit(typed_arg->mr_info, NULL, 1);
 	return NULL;
 }
 
@@ -124,11 +125,13 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 	reducer_caller_struct pt_reducer_caller_wrapper[num_reducers];
 	
 	for(int i = 0; i<num_reducers; i++){
+
 		//TODO: need to figure out argv that passed into map
 		pt_reducer_caller_wrapper[i].MRReduce = MRReduce;
 		pt_reducer_caller_wrapper[i].mr_info = mr_info;
 		pt_reducer_caller_wrapper[i].id = i;
 		pt_reducer_caller_wrapper[i].something = NULL;
+		printf("pthread_create pt_reducer %d\n", i);
 		if(pthread_create(&pt_reducer_threads[i], NULL, pt_reducer_caller, (void*)&pt_reducer_caller_wrapper[i]) != 0){
 			fprintf(stderr, "error: Cannot create pt_reducer thread # %d\n", i);
 			break;
@@ -167,6 +170,19 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 			}
 		}
 		//next round of assingment for all mappers
+	}
+
+	//send NULL signal into each buffer and close it
+	for(int i=0; i<num_reducers; i++){
+		pthread_mutex_lock(&(mr_info.buffer_arr[i].lock));
+		while(!mr_info.buffer_arr[i].is_empty){
+			pthread_cond_wait(&(mr_info.buffer_arr[i].cond),&(mr_info.buffer_arr[i].lock));
+		}
+		mr_info.buffer_arr[i].is_empty = false;
+		printf("put %p in buffer num %d \n",NULL,i );
+		mr_info.buffer_arr[i].space_ptr = (void*) NULL;
+		pthread_cond_signal (&(mr_info.buffer_arr[i].cond));
+		pthread_mutex_unlock (&(mr_info.buffer_arr[i].lock));
 	}
 
 	for(int i=0; i<num_reducers; i++){
@@ -218,6 +234,7 @@ void MREmit(mr_state mr_info, char* new_word, int val){
 		pthread_cond_wait(&(buffer_arr[buffer_num].cond),&(buffer_arr[buffer_num].lock));
 	}
 	buffer_arr[buffer_num].is_empty = false;
+	printf("put %s in buffer num %d \n",new_word,buffer_num );
 	buffer_arr[buffer_num].space_ptr = (void*) new_word;
 	pthread_cond_signal (&(buffer_arr[buffer_num].cond));
 	pthread_mutex_unlock (&(buffer_arr[buffer_num].lock));
@@ -227,17 +244,22 @@ void MRReduce(mr_state mr_info, char* key, void* something, int id){
 	//MRReduce will take char* from buffer and add it to partition_table
 	buffer* buffer_arr = mr_info.buffer_arr;
 	char* new_word;
-	pthread_mutex_lock(&(buffer_arr[id].lock));
-	while(buffer_arr[id].is_empty){
-		pthread_cond_wait(&(buffer_arr[id].cond),&(buffer_arr[id].lock));
+	while(1){
+		pthread_mutex_lock(&(buffer_arr[id].lock));
+		while(buffer_arr[id].is_empty){
+			pthread_cond_wait(&(buffer_arr[id].cond),&(buffer_arr[id].lock));
+		}
+		new_word = (char*)buffer_arr[id].space_ptr;
+		printf("receive word %s from buffer num %d\n",new_word, id );
+		buffer_arr[id].is_empty = true;
+		pthread_cond_signal (&(buffer_arr[id].cond));
+		pthread_mutex_unlock (&(buffer_arr[id].lock));
+		if(new_word == NULL){
+			break;
+		}else {
+			insert_node(new_word,&mr_info.root_ptr[id]);
+		}
 	}
-	new_word = (char*)buffer_arr[id].space_ptr;
-	buffer_arr[id].is_empty = true;
-	pthread_cond_signal (&(buffer_arr[id].cond));
-	pthread_mutex_unlock (&(buffer_arr[id].lock));
-
-	node* root = mr_info.root_ptr[id];
-	insert_node(new_word,&root);
 	return;
 }
 
@@ -271,9 +293,11 @@ void map(mr_state mr_info, FILE* file, char* val){
 		char* new_word = get_word(file);
 
 		if(new_word != NULL && new_word[0] != '\0'){
+			printf("before MREmit, new_word is %s\n",new_word);
 			MREmit(mr_info, new_word, 1);
 		}else {
 			if(new_word == NULL){
+				printf("before return in map\n");
 				return;
 			}
 		}

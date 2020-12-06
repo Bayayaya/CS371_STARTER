@@ -25,19 +25,19 @@ struct node* newNode(char* data) {
 
 
 void insert_node(char* data, node** root){
-	node* new_node_ptr = newNode(data);
-	while(1){
 		if(*root == NULL){
-			*root = new_node_ptr;
+			*root = newNode(data);
+			printf("before return in insert_node, data is %s\n",data);
 			return;
 		} else {
 			if(strcmp(data,(*root)->data)<=0){
 				insert_node(data,&((*root)->left));
+				printf("go to left\n");
 			}else{
 				insert_node(data,&((*root)->right));
+				printf("go to right\n");
 			}
 		}
-	}
 }
 
 
