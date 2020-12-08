@@ -191,6 +191,24 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 		}
 	}
 
+	print_tree(root[0]);
+	print_tree(root[1]);
+
+	//test tree iterator
+
+	tree_iterator tree_iter_arr[num_reducers];
+	for(int i = 0; i<num_reducers; i++){
+		node_iter_init(&tree_iter_arr[i],root[i]);
+	}
+	node* node_got;
+	while((node_got = next_node(&tree_iter_arr[0]))!=NULL){
+		printf("iter tree 0 node %s\n", node_got->data);
+	}
+
+	while((node_got = next_node(&tree_iter_arr[1]))!=NULL){
+		printf("iter tree 1 node %s\n", node_got->data);
+	}
+
 	//create reducer threads
 	pthread_t reducer_threads[num_reducers];
 	reducer_caller_struct reducer_caller_wrapper[num_reducers];
@@ -199,9 +217,17 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 		//TODO: need to figure out argv that passed into map
 		reducer_caller_wrapper[i].reduce = reduce;
 		reducer_caller_wrapper[i].mr_info = mr_info;
+		reducer_caller_wrapper[i].id = i;
+		reducer_caller_wrapper[i].something = NULL;
 		if(pthread_create(&reducer_threads[i], NULL, reducer_caller, (void*)&reducer_caller_wrapper[i]) != 0){
 			fprintf(stderr, "error: Cannot create reducer thread # %d\n", i);
 			break;
+		}
+	}
+
+	for(int i=0; i<num_reducers; i++){
+		if(pthread_join(reducer_threads[i],NULL) != 0){
+			printf("error: Cannot join pt_reducer_thread # %d\n", i);
 		}
 	}
 
@@ -304,10 +330,65 @@ void map(mr_state mr_info, FILE* file, char* val){
 	}
 }
 
+typedef struct fancy_iter{
+	tree_iterator reg_iter;
+	char* peek_key;
+	bool same_as_prev_key;
+	bool reach_the_end;
+}fancy_iter;
 
+void fancy_iter_init(fancy_iter* f_iter, node* root){
+	node_iter_init(&(f_iter->reg_iter), root);
+	node* next_temp = next_node(&(f_iter->reg_iter));
+	if(next_temp!=NULL){
+		f_iter->peek_key = next_temp->data;
+		f_iter->same_as_prev_key = false;
+		f_iter->reach_the_end = false;
+	}
+	f_iter->same_as_prev_key = false;
+	f_iter->reach_the_end = true;
+}
+
+char* fancy_iter_peek(fancy_iter* f_iter){
+	return f_iter->peek_key;
+}
+
+void* MRGetNext(fancy_iter* f_iter){
+	if(f_iter->same_as_prev_key == false){
+		return NULL;
+	}else{
+		node* next_temp = next_node(&(f_iter->reg_iter));
+		if(next_temp!=NULL){
+			if(strcmp(f_iter->peek_key,next_temp->data)==0){
+				f_iter->same_as_prev_key = true;
+			} else {
+				f_iter->peek_key = next_temp->data;
+				f_iter->reach_the_end = false;
+			}
+			return (void*)next_temp;
+		}else{
+			f_iter->reach_the_end = true;
+			return (void*)f_iter;
+		}
+
+	}
+}
+
+void MRPostProcess(mr_state mr_info, char* key, int count){
+
+printf("key is %s, count is %d\n",key,count);
+
+}
 
 void reduce(mr_state mr_info, char* key, void* something, int id){
-	printf("doing nothing\n");
+	printf("this is reducer number %d\n", id);
+	node * root_ptr = mr_info.root_ptr[id];
+	//print_tree(root_ptr);
+
+	// int count = 0;
+	// while((MRGetNext(mr_info,id))!=NULL){
+	// 	MRPostProcess(mr_info,next_node);
+	// }
 }
 
 int main (int argc, char *argv[]){
