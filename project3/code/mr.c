@@ -5,12 +5,18 @@
 #include <assert.h>
 #include <math.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include "Partition_table.h"
 
 typedef struct{
 	char* key;
 	int val;
 } kv_pair;
+
+typedef struct fancy_iter{
+	tree_iterator reg_iter;
+	node* peek_node;
+}fancy_iter;
 
 typedef struct{
 	pthread_cond_t cond;
@@ -26,26 +32,54 @@ typedef struct {
 	int num_mappers;
 	int num_reducers;
 	node** root_ptr;
+	fancy_iter* f_iter_arr;
 } mr_state;
 
 typedef void (*map_func)(mr_state mr_info, FILE* file, char* val);
 typedef void (*reduce_func)(mr_state mr_info, char* key, void* something, int id);
 void MRReduce(mr_state mr_info, char* key, void* something, int id);
 void MREmit(mr_state mr_info, char* new_word, int val);
+
 typedef struct {
 	map_func map;
 //everything that MREmit & reduce needs
 	mr_state mr_info;
 	FILE* file;
 	char* val;
+	int id;
 } map_caller_struct;
 
 void* map_caller(void* arg){
 	map_caller_struct* typed_arg;
 	typed_arg = (map_caller_struct*)arg;
+	// if(typed_arg->id == 0){
+	// 	sleep(1);
+	// } 
 	typed_arg->map(typed_arg->mr_info, typed_arg->file,typed_arg->val);
 	//MREmit(typed_arg->mr_info, NULL, 1);
 	return NULL;
+}
+
+void fancy_iter_init(fancy_iter* f_iter, node* root){
+	node_iter_init(&(f_iter->reg_iter), root);
+	f_iter->peek_node = next_node(&(f_iter->reg_iter));
+}
+
+char* fancy_iter_peek(fancy_iter* f_iter){
+	if(f_iter->peek_node==NULL){
+		return NULL;
+	}
+	return f_iter->peek_node->data;
+}
+
+void* fancy_iter_next(fancy_iter* f_iter, char* key){
+	if(f_iter->peek_node==NULL || strcmp(key,f_iter->peek_node->data)!=0){
+		return NULL;
+	} 
+
+	node* ret = f_iter->peek_node;
+	f_iter->peek_node = next_node(&f_iter->reg_iter);
+	return (void*)"VAL SHOULD BE HERE";
 }
 
 typedef struct{
@@ -60,8 +94,16 @@ typedef struct{
 void* reducer_caller(void* arg){
 	reducer_caller_struct* typed_arg;
 	typed_arg = (reducer_caller_struct*)arg;
-	typed_arg->reduce(typed_arg->mr_info, typed_arg->key, typed_arg->something, typed_arg->id);
-	return NULL;
+	mr_state mr_info = typed_arg->mr_info;
+	int id = typed_arg->id;
+
+	while(1){
+		char* key = fancy_iter_peek(&mr_info.f_iter_arr[id]);
+		if(key==NULL){
+			return NULL;
+		}
+		typed_arg->reduce(typed_arg->mr_info, key, typed_arg->something, id);
+	}
 }
 
 void* pt_reducer_caller(void* arg){
@@ -151,6 +193,7 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 			map_caller_wrapper[j].file = file_list[assinged_files];
 			map_caller_wrapper[j].map = map;
 			map_caller_wrapper[j].mr_info = mr_info;
+			map_caller_wrapper[j].id=j;
 			assinged_files++;
 			if(assinged_files>file_num){
 				//after we assign all the files, break out of for loop
@@ -196,18 +239,26 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 
 	//test tree iterator
 
-	tree_iterator tree_iter_arr[num_reducers];
-	for(int i = 0; i<num_reducers; i++){
-		node_iter_init(&tree_iter_arr[i],root[i]);
-	}
-	node* node_got;
-	while((node_got = next_node(&tree_iter_arr[0]))!=NULL){
-		printf("iter tree 0 node %s\n", node_got->data);
+	// tree_iterator tree_iter_arr[num_reducers];
+	// for(int i = 0; i<num_reducers; i++){
+	// 	node_iter_init(&tree_iter_arr[i],root[i]);
+	// }
+	// node* node_got;
+	// while((node_got = next_node(&tree_iter_arr[0]))!=NULL){
+	// 	printf("iter tree 0 node %s\n", node_got->data);
+	// }
+
+	// while((node_got = next_node(&tree_iter_arr[1]))!=NULL){
+	// 	printf("iter tree 1 node %s\n", node_got->data);
+	// }
+
+	fancy_iter f_iter[num_reducers];
+	for(int i=0; i<num_reducers; i++){
+		fancy_iter_init(&f_iter[i],root[i]);
 	}
 
-	while((node_got = next_node(&tree_iter_arr[1]))!=NULL){
-		printf("iter tree 1 node %s\n", node_got->data);
-	}
+	mr_info.f_iter_arr = f_iter;
+
 
 	//create reducer threads
 	pthread_t reducer_threads[num_reducers];
@@ -243,8 +294,11 @@ long Partitioner (char* key, int num_partitions){
 		hash = hash*33+c;
 	}
 	long ret = hash % num_partitions;
-	ret=ret>=0 ? ret:ret+num_partitions;
-	return ret;
+	if(ret<0){
+		return ret+num_partitions;
+	} else {
+		return ret;
+	}
 }
 
 void MREmit(mr_state mr_info, char* new_word, int val){
@@ -253,6 +307,8 @@ void MREmit(mr_state mr_info, char* new_word, int val){
 	//then take lock, check is_empty,send new_word, set condvar
 	int num_partitions = mr_info.num_reducers;
 	int buffer_num = Partitioner(new_word,num_partitions);
+	assert(buffer_num >= 0);
+	assert(buffer_num<mr_info.num_reducers);
 	buffer* buffer_arr = mr_info.buffer_arr;
 
 	pthread_mutex_lock(&(buffer_arr[buffer_num].lock));
@@ -330,53 +386,16 @@ void map(mr_state mr_info, FILE* file, char* val){
 	}
 }
 
-typedef struct fancy_iter{
-	tree_iterator reg_iter;
-	char* peek_key;
-	bool same_as_prev_key;
-	bool reach_the_end;
-}fancy_iter;
 
-void fancy_iter_init(fancy_iter* f_iter, node* root){
-	node_iter_init(&(f_iter->reg_iter), root);
-	node* next_temp = next_node(&(f_iter->reg_iter));
-	if(next_temp!=NULL){
-		f_iter->peek_key = next_temp->data;
-		f_iter->same_as_prev_key = false;
-		f_iter->reach_the_end = false;
-	}
-	f_iter->same_as_prev_key = false;
-	f_iter->reach_the_end = true;
-}
+void* MRGetNext(mr_state mr_info, char* key, int id){
 
-char* fancy_iter_peek(fancy_iter* f_iter){
-	return f_iter->peek_key;
-}
+	return fancy_iter_next(&mr_info.f_iter_arr[id],key);
 
-void* MRGetNext(fancy_iter* f_iter){
-	if(f_iter->same_as_prev_key == false){
-		return NULL;
-	}else{
-		node* next_temp = next_node(&(f_iter->reg_iter));
-		if(next_temp!=NULL){
-			if(strcmp(f_iter->peek_key,next_temp->data)==0){
-				f_iter->same_as_prev_key = true;
-			} else {
-				f_iter->peek_key = next_temp->data;
-				f_iter->reach_the_end = false;
-			}
-			return (void*)next_temp;
-		}else{
-			f_iter->reach_the_end = true;
-			return (void*)f_iter;
-		}
-
-	}
 }
 
 void MRPostProcess(mr_state mr_info, char* key, int count){
 
-printf("key is %s, count is %d\n",key,count);
+	printf("key is %s, count is %d\n",key,count);
 
 }
 
@@ -385,10 +404,12 @@ void reduce(mr_state mr_info, char* key, void* something, int id){
 	node * root_ptr = mr_info.root_ptr[id];
 	//print_tree(root_ptr);
 
-	// int count = 0;
-	// while((MRGetNext(mr_info,id))!=NULL){
-	// 	MRPostProcess(mr_info,next_node);
-	// }
+	int count = 0;
+	while((MRGetNext(mr_info,key,id))!=NULL){
+		count++;
+		
+	}
+	MRPostProcess(mr_info,key,count);
 }
 
 int main (int argc, char *argv[]){

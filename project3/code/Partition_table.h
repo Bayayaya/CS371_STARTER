@@ -58,81 +58,86 @@ void print_tree(node* root){
 }
 
 typedef struct iterator{
-	node* node_stack[1000];
-	//the current position in array
-	int current;
-	node* last_return;
+	node* node_stack[1000];  //I am sorry :)
+	int stack_len;
 }tree_iterator;
-
-void node_iter_init(tree_iterator* iter, node* root){
-	iter->current = 0;
-	iter->last_return = NULL;
-	iter->last_node_is_right = false;
-	while(root!=NULL){
-		iter->node_stack[iter->current]=root;
-		iter->current ++;
-		root = root->left;
-	}
-} 
 
 void add_with_all_left_children(tree_iterator* iter, node* node_to_add){
 	while(node_to_add != NULL){
-		iter->node_stack[iter->current] = node_to_add;
-		iter->current ++;
+		iter->node_stack[iter->stack_len] = node_to_add;
+		iter->stack_len ++;
 		node_to_add = node_to_add->left;
 	}
 }
 
+void node_iter_init(tree_iterator* iter, node* root){
+	iter->stack_len = 0;
+	add_with_all_left_children(iter,root);
+} 
 
-node* next_node(tree_iterator * iter){
-	printf("start next_node\n");
-	node* ret = NULL;
 
-	while(iter->current != 0){
-		if(iter->node_stack[(iter->current)-1]!=NULL){
-			printf("iter current %d data is %s\n", iter->current, iter->node_stack[(iter->current)-1]->data);
-		}
-		if(iter->node_stack[(iter->current)-1]!=NULL && iter->last_return == NULL){
-		//Push left node into stack until we push NULL onto stack
-			printf("push left node because last_return = NULL \n");
-			iter->node_stack[iter->current] = iter->node_stack[(iter->current)-1]->left;
-			assert(iter->node_stack[(iter->current)-1]->left ==NULL);
-			iter->current ++;
-		} else
+node* next_node(tree_iterator* iter){
+	if(iter->stack_len == 0){
+		return NULL;
+	} 
 
-		if(iter->node_stack[(iter->current)-1]!=NULL && iter->node_stack[(iter->current)-1]->left == iter->last_return){
-		//Push left NULL into stack until we push NULL onto stack
-			printf("push NULL \n");
-			iter->node_stack[iter->current] = NULL;
-			iter->current ++;
-		} else
+	iter->stack_len --;
+	node* ret = iter->node_stack[iter->stack_len];
 
-		if(iter->node_stack[(iter->current)-1]!=NULL){
-		//Push left node into stack until we push NULL onto stack
-			printf("push left node\n");
-			iter->node_stack[iter->current] = iter->node_stack[(iter->current)-1]->left;
-			iter->current ++;
-		}
-		else{
-				//node[current-1] == NULL; pop
-			assert(iter->node_stack[(iter->current)-1]==NULL);
-			iter->current--;
-			ret = iter->node_stack[(iter->current)-1];
-			iter->last_return = ret;
-			printf("which node %s\n", ret->data);
-			iter->current--;
-				//push right node to stack
-			
-			if(iter->node_stack[(iter->current)]->right != NULL){
-				iter->node_stack[(iter->current)] = iter->node_stack[(iter->current)]->right;
-				iter->current++;
-			}
-			printf("iter current is %d before return \n",iter->current);
-			return ret;
-		}
-	}
+	add_with_all_left_children(iter, ret->right);
 	return ret;
 }
+
+
+// node* next_node_2(tree_iterator * iter){
+// 	printf("start next_node\n");
+// 	node* ret = NULL;
+
+// 	while(iter->stack_len != 0){
+// 		if(iter->node_stack[(iter->stack_len)-1]!=NULL){
+// 			printf("iter stack_len %d data is %s\n", iter->stack_len, iter->node_stack[(iter->stack_len)-1]->data);
+// 		}
+// 		if(iter->node_stack[(iter->stack_len)-1]!=NULL && iter->last_return == NULL){
+// 		//Push left node into stack until we push NULL onto stack
+// 			printf("push left node because last_return = NULL \n");
+// 			iter->node_stack[iter->stack_len] = iter->node_stack[(iter->stack_len)-1]->left;
+// 			assert(iter->node_stack[(iter->stack_len)-1]->left ==NULL);
+// 			iter->stack_len ++;
+// 		} else
+
+// 		if(iter->node_stack[(iter->stack_len)-1]!=NULL && iter->node_stack[(iter->stack_len)-1]->left == iter->last_return){
+// 		//Push left NULL into stack until we push NULL onto stack
+// 			printf("push NULL \n");
+// 			iter->node_stack[iter->stack_len] = NULL;
+// 			iter->stack_len ++;
+// 		} else
+
+// 		if(iter->node_stack[(iter->stack_len)-1]!=NULL){
+// 		//Push left node into stack until we push NULL onto stack
+// 			printf("push left node\n");
+// 			iter->node_stack[iter->stack_len] = iter->node_stack[(iter->stack_len)-1]->left;
+// 			iter->stack_len ++;
+// 		}
+// 		else{
+// 				//node[stack_len-1] == NULL; pop
+// 			assert(iter->node_stack[(iter->stack_len)-1]==NULL);
+// 			iter->stack_len--;
+// 			ret = iter->node_stack[(iter->stack_len)-1];
+// 			iter->last_return = ret;
+// 			printf("which node %s\n", ret->data);
+// 			iter->stack_len--;
+// 				//push right node to stack
+			
+// 			if(iter->node_stack[(iter->stack_len)]->right != NULL){
+// 				iter->node_stack[(iter->stack_len)] = iter->node_stack[(iter->stack_len)]->right;
+// 				iter->stack_len++;
+// 			}
+// 			printf("iter stack_len is %d before return \n",iter->stack_len);
+// 			return ret;
+// 		}
+// 	}
+// 	return ret;
+// }
 
 //this need to be re-write
 void free_tree(node* root){
