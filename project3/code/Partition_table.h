@@ -14,7 +14,7 @@ right pointers. */
 struct node* newNode(char* data) { 
 // Allocate memory for new node  
 	struct node* node = (struct node*)malloc(sizeof(struct node)); 
-	printf("creating a new node and data is %s\n", data);
+	//printf("creating a new node and data is %s\n", data);
 // Assign data to this node 
 	node->data = data; 
 
@@ -28,15 +28,15 @@ struct node* newNode(char* data) {
 void insert_node(char* data, node** root){
 	if(*root == NULL){
 		*root = newNode(data);
-		printf("before return in insert_node, data is %s\n",data);
+		//printf("before return in insert_node, data is %s\n",data);
 		return;
 	} else {
 		if(strcmp(data,(*root)->data)<=0){
 			insert_node(data,&((*root)->left));
-			printf("go to left\n");
+			//printf("go to left\n");
 		}else{
 			insert_node(data,&((*root)->right));
-			printf("go to right\n");
+			//printf("go to right\n");
 		}
 	}
 }
@@ -58,7 +58,7 @@ void print_tree(node* root){
 }
 
 typedef struct iterator{
-	node* node_stack[1000];  //I am sorry :)
+	node* node_stack[3000];  //I am sorry :)
 	int stack_len;
 }tree_iterator;
 

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6,6 +8,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include "Partition_table.h"
 
 typedef struct{
@@ -37,7 +40,8 @@ typedef struct {
 
 typedef void (*map_func)(mr_state mr_info, FILE* file, char* val);
 typedef void (*reduce_func)(mr_state mr_info, char* key, void* something, int id);
-void MRReduce(mr_state mr_info, char* key, void* something, int id);
+typedef void (*pt_reduce_func)(mr_state mr_info, void* something, int id);
+void MRReduce(mr_state mr_info, void* something, int id);
 void MREmit(mr_state mr_info, char* new_word, int val);
 
 typedef struct {
@@ -57,6 +61,8 @@ void* map_caller(void* arg){
 	// } 
 	typed_arg->map(typed_arg->mr_info, typed_arg->file,typed_arg->val);
 	//MREmit(typed_arg->mr_info, NULL, 1);
+	pid_t tid = gettid();
+	printf("mapper caller %d return \n", tid);
 	return NULL;
 }
 
@@ -84,7 +90,7 @@ void* fancy_iter_next(fancy_iter* f_iter, char* key){
 
 typedef struct{
 	reduce_func reduce;
-	reduce_func MRReduce;
+	pt_reduce_func MRReduce;
 	mr_state mr_info;
 	char* key;
 	void* something;
@@ -109,7 +115,7 @@ void* reducer_caller(void* arg){
 void* pt_reducer_caller(void* arg){
 	reducer_caller_struct* typed_arg;
 	typed_arg = (reducer_caller_struct*)arg;
-	typed_arg->MRReduce(typed_arg->mr_info, typed_arg->key, typed_arg->something, typed_arg->id);
+	typed_arg->MRReduce(typed_arg->mr_info, typed_arg->something, typed_arg->id);
 	return NULL;
 }
 
@@ -234,8 +240,8 @@ void MRRun(char* path, map_func map, reduce_func reduce, int num_mappers, int nu
 		}
 	}
 
-	print_tree(root[0]);
-	print_tree(root[1]);
+	//print_tree(root[0]);
+	//print_tree(root[1]);
 
 	//test tree iterator
 
@@ -310,31 +316,43 @@ void MREmit(mr_state mr_info, char* new_word, int val){
 	assert(buffer_num >= 0);
 	assert(buffer_num<mr_info.num_reducers);
 	buffer* buffer_arr = mr_info.buffer_arr;
-
+	// printf("deadlock MREmit %s is going to take lock\n", new_word ); 
 	pthread_mutex_lock(&(buffer_arr[buffer_num].lock));
 	while(!buffer_arr[buffer_num].is_empty){
 		pthread_cond_wait(&(buffer_arr[buffer_num].cond),&(buffer_arr[buffer_num].lock));
 	}
+	// printf("deadlock MREmit %s has lock now\n", new_word );
+
 	buffer_arr[buffer_num].is_empty = false;
-	printf("put %s in buffer num %d \n",new_word,buffer_num );
+	//printf("put %s in buffer num %d \n",new_word,buffer_num );
 	buffer_arr[buffer_num].space_ptr = (void*) new_word;
-	pthread_cond_signal (&(buffer_arr[buffer_num].cond));
+	// printf("deadlock MREmit %s is going to set signal\n", new_word );
+
+	pthread_cond_broadcast (&(buffer_arr[buffer_num].cond));
+	// printf("deadlock MREmit %s is going to release lock\n", new_word );
+
 	pthread_mutex_unlock (&(buffer_arr[buffer_num].lock));
 }
 
-void MRReduce(mr_state mr_info, char* key, void* something, int id){
+void MRReduce(mr_state mr_info, void* something, int id){
 	//MRReduce will take char* from buffer and add it to partition_table
 	buffer* buffer_arr = mr_info.buffer_arr;
 	char* new_word;
 	while(1){
+		//printf("deadlock MRReduce %d is going to take lock for %s\n",id, new_word);
 		pthread_mutex_lock(&(buffer_arr[id].lock));
 		while(buffer_arr[id].is_empty){
 			pthread_cond_wait(&(buffer_arr[id].cond),&(buffer_arr[id].lock));
 		}
+		//printf("deadlock MRReduce %d has lock for %s now\n",id, new_word);
 		new_word = (char*)buffer_arr[id].space_ptr;
-		printf("receive word %s from buffer num %d\n",new_word, id );
+		//printf("MRReduce receive word %s from buffer num %d\n",new_word, id );
 		buffer_arr[id].is_empty = true;
+		//printf("deadlock MRReduce %d set signal for %s now\n",id, new_word);
 		pthread_cond_signal (&(buffer_arr[id].cond));
+		//printf("deadlock MRReduce %d is going to release lock for %s now\n",id, new_word);
+		pid_t tid = gettid();
+		//printf("reducer tid is %d\n", tid);
 		pthread_mutex_unlock (&(buffer_arr[id].lock));
 		if(new_word == NULL){
 			break;
@@ -342,6 +360,8 @@ void MRReduce(mr_state mr_info, char* key, void* something, int id){
 			insert_node(new_word,&mr_info.root_ptr[id]);
 		}
 	}
+
+	//printf("reducer %d return \n", id);
 	return;
 }
 
@@ -375,11 +395,12 @@ void map(mr_state mr_info, FILE* file, char* val){
 		char* new_word = get_word(file);
 
 		if(new_word != NULL && new_word[0] != '\0'){
-			printf("before MREmit, new_word is %s\n",new_word);
+			//printf("before MREmit, new_word is %s\n",new_word);
 			MREmit(mr_info, new_word, 1);
 		}else {
 			if(new_word == NULL){
-				printf("before return in map\n");
+
+				//printf("before return in map\n");
 				return;
 			}
 		}
@@ -400,7 +421,7 @@ void MRPostProcess(mr_state mr_info, char* key, int count){
 }
 
 void reduce(mr_state mr_info, char* key, void* something, int id){
-	printf("this is reducer number %d\n", id);
+	//printf("this is reducer number %d\n", id);
 	node * root_ptr = mr_info.root_ptr[id];
 	//print_tree(root_ptr);
 
@@ -413,7 +434,7 @@ void reduce(mr_state mr_info, char* key, void* something, int id){
 }
 
 int main (int argc, char *argv[]){
-	MRRun("../testdir", map, reduce, 2, 2);
-
+		//printf("New Test Start!\n");
+		MRRun("../10_splits", map, reduce, 5, 5);
 	return 0;
 }
